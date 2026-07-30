@@ -6,6 +6,7 @@ from .debug import DebugEvent
 from .errors import (
     CaptchaError,
     CloudOnlyError,
+    InsufficientCreditsError,
     OssOnlyError,
     RateLimitError,
     SERPError,
@@ -74,6 +75,7 @@ __all__ = [
     "HealthStatus",
     "ImageEnvelope",
     "ImageResult",
+    "InsufficientCreditsError",
     "LastResponse",
     "MegaEnginesResponse",
     "MegaMode",

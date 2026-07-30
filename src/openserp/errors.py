@@ -38,6 +38,25 @@ class CaptchaError(SERPError):
     pass
 
 
+class InsufficientCreditsError(SERPError):
+    """Raised on 402 when the account is out of credits.
+
+    ``topup_url`` points at the dashboard page that accepts card and crypto
+    payments, so an integration can surface a working link instead of a bare
+    error string.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        topup_url: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, **kwargs)
+        self.topup_url = topup_url
+
+
 class CloudOnlyError(SERPError):
     def __init__(self, method: str) -> None:
         super().__init__(
@@ -85,6 +104,14 @@ def error_from_response(
 
     if code == "captcha_detected":
         return CaptchaError(message, **options)
+
+    if status == 402 or code == "insufficient_credits":
+        topup_url = data.get("topup_url")
+        return InsufficientCreditsError(
+            message,
+            topup_url=topup_url if isinstance(topup_url, str) else None,
+            **options,
+        )
 
     return SERPError(message, **options)
 
