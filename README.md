@@ -178,6 +178,36 @@ Use `min_runes` to set the auto-mode escalation floor, `clean=False` for whole-p
 markdown = client.extract(url="https://openserp.org", format="markdown")
 ```
 
+### Batch extract
+
+`batch_extract` takes up to 20 URLs in one request. A URL that fails becomes an item with an `error` instead of failing the whole call, so one dead link never costs you the other results:
+
+```python
+batch = client.batch_extract(
+    urls=[
+        "https://openserp.org/docs",
+        "https://openserp.org/blog",
+    ],
+    mode="auto",
+)
+
+for item in batch.results:
+    if item.error:
+        print(item.url, "failed:", item.error)
+    else:
+        print(item.url, item.page_content[:120])
+```
+
+On the hosted API, billing is per URL and matches calling `extract` that many times - successful extractions bill their mode, failed and empty ones are free.
+
+### Regions
+
+Pass `region` (a two-letter country code) to extract as a visitor from that country - useful for geo-fenced or localized pages. On the hosted API this adds 1 credit per successfully extracted URL:
+
+```python
+page = client.extract(url="https://example.com/pricing", region="DE")
+```
+
 ## Images
 
 ```python

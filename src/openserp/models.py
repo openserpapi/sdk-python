@@ -166,6 +166,37 @@ class ExtractResult(OpenSERPModel):
     meta: ExtractMeta | None = None
 
 
+class BatchExtractItem(OpenSERPModel):
+    """One entry of a batch extraction.
+
+    ``error`` is set only when that URL failed; the item is unbilled and the
+    rest of the batch is unaffected. On OSS the url/error also live inside
+    ``metadata`` - the client lifts them out so both backends look the same.
+    """
+
+    url: str | None = None
+    page_content: str | None = None
+    error: str | None = None
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+
+class BatchExtractMeta(OpenSERPModel):
+    requested: int | None = None
+    succeeded: int | None = None
+    failed: int | None = None
+
+
+class BatchExtractBilling(OpenSERPModel):
+    credits_used: int | None = None
+    credits_remaining: int | None = None
+
+
+class BatchExtractResult(OpenSERPModel):
+    billing: BatchExtractBilling | None = None
+    results: list[BatchExtractItem] = Field(default_factory=list)
+    meta: BatchExtractMeta | None = None
+
+
 class ImageData(OpenSERPModel):
     url: str | None = None
     thumbnail: str | None = None

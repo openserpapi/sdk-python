@@ -14,6 +14,10 @@ from .errors import (
 )
 from .models import (
     Backend,
+    BatchExtractBilling,
+    BatchExtractItem,
+    BatchExtractMeta,
+    BatchExtractResult,
     CircuitBreakerStatsResponse,
     CloudAccount,
     CreditInfo,
@@ -54,6 +58,10 @@ except PackageNotFoundError:
 __all__ = [
     "AsyncOpenSERP",
     "Backend",
+    "BatchExtractBilling",
+    "BatchExtractItem",
+    "BatchExtractMeta",
+    "BatchExtractResult",
     "CaptchaError",
     "CircuitBreakerStatsResponse",
     "CloudAccount",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from typing import Any, cast
 
@@ -9,6 +10,7 @@ import respx
 
 from openserp import (
     AsyncOpenSERP,
+    BatchExtractResult,
     CaptchaError,
     CloudOnlyError,
     ExtractResult,
@@ -238,6 +240,84 @@ def test_extract_fetches_url_content_and_forwards_all_flags() -> None:
     assert request.url.params["lang"] == "en"
     assert "proxy_url" not in request.url.params
     assert request.headers["x-proxy-url"] == "http://proxy.example:8080"
+
+
+@respx.mock
+def test_batch_extract_posts_urls_and_forwards_region() -> None:
+    route = respx.post("https://api.openserp.org/v1/extract/batch").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "billing": {"credits_used": 4, "credits_remaining": 96},
+                "results": [
+                    {
+                        "url": "https://a.example",
+                        "page_content": "First page body",
+                        "metadata": {"source": "https://a.example", "mode_used": "fast"},
+                    },
+                    {
+                        "url": "https://b.example",
+                        "page_content": "",
+                        "error": "fetch failed",
+                        "metadata": {"source": "https://b.example", "error": "fetch failed"},
+                    },
+                ],
+                "meta": {"requested": 2, "succeeded": 1, "failed": 1},
+            },
+        )
+    )
+
+    client = OpenSERP(api_key="osk_live_test")
+    response = client.batch_extract(
+        urls=["https://a.example", "https://b.example"],
+        mode="rendered",
+        lang="de",
+        region="DE",
+    )
+
+    assert isinstance(response, BatchExtractResult)
+    assert response.meta is not None
+    assert (response.meta.requested, response.meta.succeeded, response.meta.failed) == (2, 1, 1)
+    assert response.results[1].error == "fetch failed"
+    assert response.billing is not None
+    assert response.billing.credits_used == 4
+
+    body = json.loads(route.calls.last.request.content)
+    assert body["urls"] == ["https://a.example", "https://b.example"]
+    assert body["mode"] == "rendered"
+    assert body["lang"] == "de"
+    assert body["region"] == "DE"
+
+
+# OSS answers with a bare array (its Open WebUI loader contract). Both backends
+# must look the same to callers.
+@respx.mock
+def test_batch_extract_normalizes_oss_bare_array() -> None:
+    respx.post("http://localhost:7000/extract/batch").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "page_content": "First page body",
+                    "metadata": {"source": "https://a.example", "mode_used": "fast"},
+                },
+                {
+                    "page_content": "",
+                    "metadata": {"source": "https://b.example", "error": "timeout"},
+                },
+            ],
+        )
+    )
+
+    client = OpenSERP()
+    response = client.batch_extract(urls=["https://a.example", "https://b.example"])
+
+    assert response.results[0].url == "https://a.example"
+    assert response.results[0].error is None
+    assert response.results[1].url == "https://b.example"
+    assert response.results[1].error == "timeout"
+    assert response.meta is not None
+    assert (response.meta.requested, response.meta.succeeded, response.meta.failed) == (2, 1, 1)
 
 
 @respx.mock

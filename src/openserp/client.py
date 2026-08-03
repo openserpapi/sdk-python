@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, TypeVar, cast
 
 import httpx
@@ -12,6 +13,9 @@ from .debug import DebugEvent, DebugReporter, DebugSetting, dump_headers, resolv
 from .errors import CloudOnlyError, OssOnlyError, TimeoutError, error_from_response
 from .models import (
     Backend,
+    BatchExtractItem,
+    BatchExtractMeta,
+    BatchExtractResult,
     CacheStats,
     CircuitBreakerStatsResponse,
     CloudAccount,
@@ -133,6 +137,34 @@ class _BaseOpenSERP:
         }
         clean_query, headers = _split_query_and_headers(query)
         return clean_query, headers, format
+
+    def _build_batch_extract_request(
+        self,
+        *,
+        urls: Sequence[str],
+        mode: ExtractMode | None,
+        min_runes: int | None,
+        clean: bool | None,
+        use_llms_txt: bool | None,
+        lang: str | None,
+        region: str | None,
+        params: Mapping[str, Any],
+    ) -> tuple[str, dict[str, str]]:
+        # Proxy/tenant knobs travel as headers on every other endpoint; reuse
+        # that split so batch behaves the same. Everything else is body JSON.
+        _, headers = _split_query_and_headers(dict(params))
+        body: dict[str, Any] = {
+            "urls": list(urls),
+            "mode": mode,
+            "min_runes": min_runes,
+            "clean": clean,
+            "use_llms_txt": use_llms_txt,
+            "lang": lang,
+            "region": region,
+        }
+        payload = {key: value for key, value in body.items() if value is not None}
+        headers = {**headers, "Content-Type": "application/json"}
+        return json.dumps(payload), headers
 
     def _set_last_response(self, response: httpx.Response) -> None:
         headers = {key.lower(): value for key, value in response.headers.items()}
@@ -293,6 +325,38 @@ class OpenSERP(_BaseOpenSERP):
             params=params,
         )
         return self._get_model(ExtractResult, "/extract", query, headers, format)
+
+    def batch_extract(
+        self,
+        *,
+        urls: Sequence[str],
+        mode: ExtractMode | None = None,
+        min_runes: int | None = None,
+        clean: bool | None = None,
+        use_llms_txt: bool | None = None,
+        lang: str | None = None,
+        region: str | None = None,
+        **params: Any,
+    ) -> BatchExtractResult:
+        """Extract up to 20 URLs in one request.
+
+        Billing matches calling :meth:`extract` once per URL: successful
+        extractions bill their mode plus any region surcharge, while failed and
+        empty ones are free. A URL that fails becomes an item carrying an
+        ``error`` rather than failing the whole call.
+        """
+        body, headers = self._build_batch_extract_request(
+            urls=urls,
+            mode=mode,
+            min_runes=min_runes,
+            clean=clean,
+            use_llms_txt=use_llms_txt,
+            lang=lang,
+            region=region,
+            params=params,
+        )
+        payload = self._send("POST", "/extract/batch", headers=headers, content=body)
+        return _normalize_batch_extract(payload)
 
     def fast_search(self, **params: Any) -> MegaSearchEnvelope | str:
         return self.mega_search(**{**params, "mode": "fast"})
@@ -498,6 +562,32 @@ class AsyncOpenSERP(_BaseOpenSERP):
         )
         return await self._get_model(ExtractResult, "/extract", query, headers, format)
 
+    async def batch_extract(
+        self,
+        *,
+        urls: Sequence[str],
+        mode: ExtractMode | None = None,
+        min_runes: int | None = None,
+        clean: bool | None = None,
+        use_llms_txt: bool | None = None,
+        lang: str | None = None,
+        region: str | None = None,
+        **params: Any,
+    ) -> BatchExtractResult:
+        """Extract up to 20 URLs in one request. See :meth:`OpenSERP.batch_extract`."""
+        body, headers = self._build_batch_extract_request(
+            urls=urls,
+            mode=mode,
+            min_runes=min_runes,
+            clean=clean,
+            use_llms_txt=use_llms_txt,
+            lang=lang,
+            region=region,
+            params=params,
+        )
+        payload = await self._send("POST", "/extract/batch", headers=headers, content=body)
+        return _normalize_batch_extract(payload)
+
     async def fast_search(self, **params: Any) -> MegaSearchEnvelope | str:
         return await self.mega_search(**{**params, "mode": "fast"})
 
@@ -627,6 +717,39 @@ class AsyncOpenSERP(_BaseOpenSERP):
                 if not self.retry or not self.retry(exc, attempt):
                     raise
                 attempt += 1
+
+
+def _normalize_batch_extract(payload: Any) -> BatchExtractResult:
+    """Normalize both batch response shapes into one model.
+
+    OSS answers with a bare array of ``{page_content, metadata}`` (its Open
+    WebUI loader contract) while the cloud wraps that in an envelope so per-URL
+    billing has somewhere to be reported. Callers should not have to care.
+    """
+    if isinstance(payload, dict):
+        return BatchExtractResult.model_validate(payload)
+
+    items = payload if isinstance(payload, list) else []
+    results: list[BatchExtractItem] = []
+    for entry in items:
+        metadata = entry.get("metadata") or {} if isinstance(entry, dict) else {}
+        results.append(
+            BatchExtractItem(
+                url=metadata.get("source"),
+                page_content=entry.get("page_content") if isinstance(entry, dict) else None,
+                error=metadata.get("error") or None,
+                metadata=metadata,
+            )
+        )
+    failed = sum(1 for item in results if item.error)
+    return BatchExtractResult(
+        results=results,
+        meta=BatchExtractMeta(
+            requested=len(results),
+            succeeded=len(results) - failed,
+            failed=failed,
+        ),
+    )
 
 
 def _split_query_and_headers(
