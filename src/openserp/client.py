@@ -192,10 +192,13 @@ class _BaseOpenSERP:
 
     def _handle_response(self, response: httpx.Response, format: ResponseFormat | None) -> Any:
         self._set_last_response(response)
-        body = _read_body(response, format)
+        body = _read_body(response, None if response.is_error else format)
         if response.is_error:
             raise error_from_response(
-                response.status_code, body, response.headers.get("x-request-id")
+                response.status_code,
+                body,
+                response.headers.get("x-request-id"),
+                response.headers.get("retry-after"),
             )
         return body
 

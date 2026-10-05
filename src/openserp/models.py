@@ -60,6 +60,9 @@ class ResponseMeta(OpenSERPModel):
     engines_failed: list[str] = Field(default_factory=list)
     engine_errors: list[EngineErrorDetail] | None = None
     version: str | None = None
+    engine_used: str | None = None
+    engines_tried: list[str] | None = None
+    engines_skipped: list[str] | None = None
 
 
 class Pagination(OpenSERPModel):

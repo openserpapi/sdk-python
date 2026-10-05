@@ -276,6 +276,28 @@ client.engines_capabilities()
 
 The backend is inferred from `base_url` and `api_key`. Pass `backend="oss"` or `backend="cloud"` to the constructor to override.
 
+## Cloud engine status
+
+Authenticated Cloud engine status contains `engines`; anonymous status contains only `overall`. Engine states are `operational`, `loaded`, and `down`; overall states are `operational`, `degraded`, and `down`. Idle engines retain their last known state.
+
+## Cloud paging and filters
+
+For later pages, keep `limit=10` and pass `pagination.next_start` while `pagination.has_more` is true. Google, Bing, and Yandex take offsets in multiples of 10; Baidu supports early pages, Ecosia any offset, and DuckDuckGo only the first page. Unsupported offsets return `400 invalid_request` without charge.
+
+```python
+with OpenSERP(api_key=os.environ["OPENSERP_API_KEY"]) as client:
+    first = client.search(engine="google", text="openserp", limit=10)
+    if first.pagination and first.pagination.has_more:
+        next_page = client.search(
+            engine="google", text="openserp", limit=10, start=first.pagination.next_start,
+        )
+        print(next_page.results)
+```
+
+Cloud web search accepts publication-date ranges (`date="20250101..20251231"`) on Google and Ecosia. Malformed ranges and unsupported filters return `400 invalid_request`; change the request before retrying.
+
+`mega_search` in `balanced` mode rejects `start > 0`. `any_search` and `fast_search` forward the offset to compatible engines. Any starts engines in your order, overlapping slow attempts; Fast prioritizes recent health and latency. Use `response.meta.engine_used` or `client.last_response.engine_used` for the winner. `engines_tried` and `engines_skipped` may be absent. These rules also apply to the async client.
+
 ## Telemetry
 
 `client.last_response` is updated after every HTTP response:
@@ -283,6 +305,7 @@ The backend is inferred from `base_url` and `api_key`. Pass `backend="oss"` or `
 ```python
 client.last_response.credits          # Cloud - CreditInfo(used, remaining)
 client.last_response.engine_used      # both - X-Engine-Used
+client.last_response.request_id       # X-Request-Id, also meta.request_id
 client.last_response.fallback_engine  # OSS only
 client.last_response.cache            # OSS only
 client.last_response.headers          # raw response headers (lower-cased)
@@ -295,7 +318,7 @@ Some self-hosted operational headers are not part of the Cloud response contract
 ```python
 from openserp import OpenSERP, RateLimitError, CaptchaError, SERPError
 
-client = OpenSERP(api_key="...")
+client = OpenSERP(api_key="osk_live_xxx")
 
 try:
     client.search(engine="google", text="openserp")
@@ -306,7 +329,7 @@ except CaptchaError:
     # inspect the upstream search failure and retry later
     ...
 except SERPError as err:
-    print(err.status, err.code, err.reason, err.request_id)
+    print(err.status, err.code, err.reason, err.request_id, err.retry_after)
 ```
 
 ## Retry hook
@@ -317,16 +340,14 @@ The SDK does not apply a retry policy. Provide a hook when you want one:
 import os, random, time
 from openserp import OpenSERP, SERPError
 
-RETRYABLE = {408, 429, 500, 502, 503}
+RETRYABLE = {408, 429, 500, 502, 503, 504}
 client: OpenSERP
 
 
 def should_retry(err: Exception, attempt: int) -> bool:
     if attempt >= 3 or not isinstance(err, SERPError) or err.status not in RETRYABLE:
         return False
-    headers = client.last_response.headers if client.last_response else {}
-    retry_after = float(headers.get("retry-after", 0) or 0)
-    wait = retry_after or min(2 ** attempt * 0.25, 8.0)
+    wait = err.retry_after if err.retry_after is not None else min(2 ** attempt * 0.25, 8.0)
     time.sleep(wait + random.random() * 0.25)
     return True
 
@@ -334,6 +355,8 @@ def should_retry(err: Exception, attempt: int) -> bool:
 client = OpenSERP(api_key=os.environ["OPENSERP_API_KEY"], retry=should_retry)
 client.search(engine="google", text="openserp")
 ```
+
+`SERPError.retry_after` is in seconds, read from `Retry-After` or `retry_after`. Cloud `503 engine_unavailable` carries a 60-second delay. Structured errors remain available even when you request Markdown, text, or NDJSON. The SDK makes no automatic retries.
 
 ## Use cases
 

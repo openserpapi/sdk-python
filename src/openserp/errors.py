@@ -18,6 +18,7 @@ class SERPError(Exception):
         code: str | None = None,
         reason: str | None = None,
         request_id: str | None = None,
+        retry_after: float | None = None,
         meta: dict[str, Any] | None = None,
         response: Any = None,
     ) -> None:
@@ -26,6 +27,7 @@ class SERPError(Exception):
         self.code = code
         self.reason = reason
         self.request_id = request_id
+        self.retry_after = retry_after
         self.meta = meta
         self.response = response
 
@@ -86,15 +88,20 @@ def error_from_response(
     status: int,
     body: Any,
     request_id: str | None = None,
+    retry_after: str | None = None,
 ) -> SERPError:
     data = body if isinstance(body, dict) else {}
     code = data.get("error")
     message = data.get("message") or f"OpenSERP request failed with status {status}"
+    delay = _retry_delay(retry_after)
+    if delay is None:
+        delay = _retry_delay(data.get("retry_after"))
     options = {
         "status": status,
         "code": code,
         "reason": data.get("reason"),
         "request_id": data.get("request_id") or request_id,
+        "retry_after": delay,
         "meta": data.get("meta"),
         "response": body,
     }
@@ -121,3 +128,13 @@ def _with_support_hint(message: str) -> str:
         return message
     separator = "" if message.endswith(".") else "."
     return f"{message}{separator} {SUPPORT_HINT}"
+
+
+def _retry_delay(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        return None
+    try:
+        delay = float(value)
+    except ValueError:
+        return None
+    return delay if 0 <= delay < float("inf") else None
