@@ -76,6 +76,7 @@ def test_paging_and_compact_metadata(method: str, mode: str) -> None:
         assert page.meta.engines_tried is None
         assert page.meta.engines_skipped is None
         assert page.pagination.next_start == 20
+        assert client.last_response is not None
         assert client.last_response.engine_used == "bing"
     params = route.calls.last.request.url.params
     assert params["start"] == "10"
@@ -104,7 +105,9 @@ def test_engine_status(payload: dict[str, object]) -> None:
             assert status.engines is None
         else:
             assert status.engines is not None
-            assert set(status.engines) == set(payload["engines"])
+            expected_engines = payload["engines"]
+            assert isinstance(expected_engines, dict)
+            assert set(status.engines) == set(expected_engines)
 
 
 @respx.mock
@@ -121,4 +124,6 @@ async def test_async_errors_and_status() -> None:
             await client.search(engine="google", text="test", format="markdown")
         assert caught.value.code == "engine_unavailable"
         assert caught.value.retry_after == 60
-        assert (await client.engines_status()).engines["google"].status == "operational"
+        status = await client.engines_status()
+        assert status.engines is not None
+        assert status.engines["google"].status == "operational"
