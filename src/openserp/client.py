@@ -262,11 +262,12 @@ class OpenSERP(_BaseOpenSERP):
         max_tokens: int | None = None,
         timeout: float = 100.0,
     ) -> ContextResult:
-        """Build source-backed context. Cloud preview requires an admin-tagged account.
+        """Build source-backed context. Cloud preview, not available on every account yet.
 
         max_tokens bounds the context string in cl100k_base, not the JSON envelope.
         This paid operation is never retried automatically.
         """
+        self._assert_cloud("context")
         body = _context_body(
             query,
             queries,
@@ -539,7 +540,8 @@ class AsyncOpenSERP(_BaseOpenSERP):
         max_tokens: int | None = None,
         timeout: float = 100.0,
     ) -> ContextResult:
-        """Async context builder; see OpenSERP.context for budgets and preview access."""
+        """Async context builder; see OpenSERP.context for budgets."""
+        self._assert_cloud("context")
         body = _context_body(
             query,
             queries,

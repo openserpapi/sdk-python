@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from openserp import AsyncOpenSERP, ContextResult, OpenSERP, SERPError
+from openserp import AsyncOpenSERP, CloudOnlyError, ContextResult, OpenSERP, SERPError
 
 EVIDENCE = {
     "query": "replication",
@@ -45,13 +45,9 @@ EVIDENCE = {
 }
 
 
-@pytest.mark.parametrize("cloud", [True, False])
-def test_context_posts_typed_json_and_preserves_billing(cloud: bool) -> None:
+def test_context_posts_typed_json_and_preserves_billing() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
-        expected = (
-            "https://api.openserp.org/v1/context" if cloud else "http://localhost:7000/context"
-        )
-        assert str(request.url) == expected
+        assert str(request.url) == "https://api.openserp.org/v1/context"
         assert request.method == "POST"
         assert json.loads(request.content) == {
             "query": "replication",
@@ -61,14 +57,12 @@ def test_context_posts_typed_json_and_preserves_billing(cloud: bool) -> None:
             "max_tokens": 500,
         }
         assert request.extensions["timeout"]["read"] == 100.0
-        assert "X-Admin-Secret" not in request.headers
-        if cloud:
-            assert request.headers["Authorization"] == "Bearer osk_live_test"
+        assert request.headers["Authorization"] == "Bearer osk_live_test"
         return httpx.Response(200, json=EVIDENCE, headers={"X-Credits-Used": "3"})
 
     with (
         httpx.Client(transport=httpx.MockTransport(handle)) as transport,
-        OpenSERP(api_key="osk_live_test" if cloud else None, client=transport) as client,
+        OpenSERP(api_key="osk_live_test", client=transport) as client,
     ):
         result = client.context(
             query="replication",
@@ -99,7 +93,19 @@ async def test_async_context_and_explicit_timeout() -> None:
         assert result.context == EVIDENCE["context"]
 
 
-def test_preview_error_is_not_retried() -> None:
+def test_context_is_cloud_only() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("self-hosted server must not be called")
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(handle)) as transport,
+        OpenSERP(base_url="http://localhost:7000", client=transport) as client,
+        pytest.raises(CloudOnlyError),
+    ):
+        client.context(query="replication")
+
+
+def test_context_error_is_not_retried() -> None:
     calls = 0
 
     def handle(request: httpx.Request) -> httpx.Response:

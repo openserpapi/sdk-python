@@ -1,33 +1,5 @@
 # openserp
 
-## Agent context preview (0.2.8)
-
-```python
-import os
-from openserp import OpenSERP
-
-with OpenSERP(api_key=os.environ["OPENSERP_API_KEY"]) as client:
-    result = client.context(
-        query="PostgreSQL logical replication restrictions",
-        queries=["PostgreSQL replication DDL sequences"],
-        engines=["google", "bing"], max_tokens=6000,
-    )
-    print(result.context, result.sources, result.billing)
-```
-
-`AsyncOpenSERP.context(...)` has the same parameters and typed `ContextResult`.
-Cloud is an account-gated preview: use an API key belonging to an active account
-with the server-managed `admin` tag. Other accounts get 404. No admin secret is
-needed. OSS uses `/context` on a supporting engine.
-
-Context calls default to `timeout=100.0` seconds (per-call override) and bypass
-retry hooks, because repeating a paid call may bill again. `max_tokens` bounds
-only the `context` string, including source headers, using cl100k_base; JSON is
-outside that budget. Inspect `partial`, `truncated` and `failures`. Citation spans
-are end-exclusive UTF-8 byte offsets in the exact extracted Markdown.
-Cloud reserves maximum cost first and bills successful search/extract steps plus
-assembly for nonempty context; entirely empty context is refunded.
-
 [![PyPI version](https://img.shields.io/pypi/v/openserp.svg)](https://pypi.org/project/openserp/)
 [![Python versions](https://img.shields.io/pypi/pyversions/openserp.svg)](https://pypi.org/project/openserp/)
 [![License](https://img.shields.io/pypi/l/openserp.svg)](https://github.com/openserpapi/sdk-python/blob/main/LICENSE.md)
