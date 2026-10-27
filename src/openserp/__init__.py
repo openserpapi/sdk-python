@@ -2,6 +2,15 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
 from .client import AsyncOpenSERP, OpenSERP
+from .context_models import (
+    ContextBilling,
+    ContextCitation,
+    ContextFailure,
+    ContextResult,
+    ContextSource,
+    ContextSpan,
+    ContextUsage,
+)
 from .debug import DebugEvent
 from .errors import (
     CaptchaError,
@@ -56,6 +65,13 @@ except PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = [
+    "ContextBilling",
+    "ContextCitation",
+    "ContextFailure",
+    "ContextResult",
+    "ContextSource",
+    "ContextSpan",
+    "ContextUsage",
     "AsyncOpenSERP",
     "Backend",
     "BatchExtractBilling",
