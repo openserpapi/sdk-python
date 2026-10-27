@@ -9,6 +9,7 @@ import httpx
 from pydantic import BaseModel
 
 from .backend import infer_backend, resolve_base_url
+from .context_models import ContextResult
 from .debug import DebugEvent, DebugReporter, DebugSetting, dump_headers, resolve_debug
 from .errors import CloudOnlyError, OssOnlyError, TimeoutError, error_from_response
 from .models import (
@@ -202,9 +203,7 @@ class _BaseOpenSERP:
             )
         return body
 
-    def _debug_request(
-        self, method: str, url: str, headers: Mapping[str, str]
-    ) -> None:
+    def _debug_request(self, method: str, url: str, headers: Mapping[str, str]) -> None:
         if self._debug.level == "off":
             return
         self._debug.emit(
@@ -230,15 +229,11 @@ class _BaseOpenSERP:
                 engine_used=response.headers.get("x-engine-used"),
                 request_id=response.headers.get("x-request-id"),
                 duration_ms=_elapsed_ms(started),
-                headers=dump_headers(response.headers)
-                if self._debug.level == "verbose"
-                else None,
+                headers=dump_headers(response.headers) if self._debug.level == "verbose" else None,
             )
         )
 
-    def _debug_error(
-        self, method: str, url: str, error: BaseException, started: float
-    ) -> None:
+    def _debug_error(self, method: str, url: str, error: BaseException, started: float) -> None:
         if self._debug.level == "off":
             return
         self._debug.emit(
@@ -253,6 +248,45 @@ class _BaseOpenSERP:
 
 
 class OpenSERP(_BaseOpenSERP):
+    def context(
+        self,
+        *,
+        query: str,
+        queries: Sequence[str] | None = None,
+        engines: Sequence[Engine] | None = None,
+        lang: str | None = None,
+        region: str | None = None,
+        extract_mode: ExtractMode | None = None,
+        max_sources: int | None = None,
+        max_fetches: int | None = None,
+        max_tokens: int | None = None,
+        timeout: float = 100.0,
+    ) -> ContextResult:
+        """Build source-backed context. Cloud preview requires an admin-tagged account.
+
+        max_tokens bounds the context string in cl100k_base, not the JSON envelope.
+        This paid operation is never retried automatically.
+        """
+        body = _context_body(
+            query,
+            queries,
+            engines,
+            lang,
+            region,
+            extract_mode,
+            max_sources,
+            max_fetches,
+            max_tokens,
+        )
+        payload = self._send(
+            "POST",
+            "/context",
+            headers={"Content-Type": "application/json"},
+            content=body,
+            timeout=timeout,
+        )
+        return ContextResult.model_validate(payload)
+
     def __init__(
         self,
         *,
@@ -462,6 +496,7 @@ class OpenSERP(_BaseOpenSERP):
         headers: Mapping[str, str] | None = None,
         format: ResponseFormat | None = None,
         content: str | None = None,
+        timeout: float | None = None,
     ) -> Any:
         merged_headers = self._merged_headers(headers)
         url = httpx.URL(f"{self.base_url}{path}", params=_encode_query(query))
@@ -476,19 +511,55 @@ class OpenSERP(_BaseOpenSERP):
                         url,
                         headers=merged_headers,
                         content=content,
+                        timeout=self._client.timeout if timeout is None else timeout,
                     )
                 except httpx.TimeoutException as exc:
-                    raise TimeoutError(self.timeout) from exc
+                    raise TimeoutError(self.timeout if timeout is None else timeout) from exc
                 self._debug_response(method, str(url), response, started)
                 return self._handle_response(response, format)
             except Exception as exc:
                 self._debug_error(method, str(url), exc, started)
-                if not self.retry or not self.retry(exc, attempt):
+                if path == "/context" or not self.retry or not self.retry(exc, attempt):
                     raise
                 attempt += 1
 
 
 class AsyncOpenSERP(_BaseOpenSERP):
+    async def context(
+        self,
+        *,
+        query: str,
+        queries: Sequence[str] | None = None,
+        engines: Sequence[Engine] | None = None,
+        lang: str | None = None,
+        region: str | None = None,
+        extract_mode: ExtractMode | None = None,
+        max_sources: int | None = None,
+        max_fetches: int | None = None,
+        max_tokens: int | None = None,
+        timeout: float = 100.0,
+    ) -> ContextResult:
+        """Async context builder; see OpenSERP.context for budgets and preview access."""
+        body = _context_body(
+            query,
+            queries,
+            engines,
+            lang,
+            region,
+            extract_mode,
+            max_sources,
+            max_fetches,
+            max_tokens,
+        )
+        payload = await self._send(
+            "POST",
+            "/context",
+            headers={"Content-Type": "application/json"},
+            content=body,
+            timeout=timeout,
+        )
+        return ContextResult.model_validate(payload)
+
     def __init__(
         self,
         *,
@@ -696,6 +767,7 @@ class AsyncOpenSERP(_BaseOpenSERP):
         headers: Mapping[str, str] | None = None,
         format: ResponseFormat | None = None,
         content: str | None = None,
+        timeout: float | None = None,
     ) -> Any:
         merged_headers = self._merged_headers(headers)
         url = httpx.URL(f"{self.base_url}{path}", params=_encode_query(query))
@@ -710,14 +782,15 @@ class AsyncOpenSERP(_BaseOpenSERP):
                         url,
                         headers=merged_headers,
                         content=content,
+                        timeout=self._client.timeout if timeout is None else timeout,
                     )
                 except httpx.TimeoutException as exc:
-                    raise TimeoutError(self.timeout) from exc
+                    raise TimeoutError(self.timeout if timeout is None else timeout) from exc
                 self._debug_response(method, str(url), response, started)
                 return self._handle_response(response, format)
             except Exception as exc:
                 self._debug_error(method, str(url), exc, started)
-                if not self.retry or not self.retry(exc, attempt):
+                if path == "/context" or not self.retry or not self.retry(exc, attempt):
                     raise
                 attempt += 1
 
@@ -814,3 +887,28 @@ def _int_header(headers: httpx.Headers, name: str) -> int | None:
         return int(value)
     except ValueError:
         return None
+
+
+def _context_body(
+    query: str,
+    queries: Sequence[str] | None,
+    engines: Sequence[Engine] | None,
+    lang: str | None,
+    region: str | None,
+    extract_mode: ExtractMode | None,
+    max_sources: int | None,
+    max_fetches: int | None,
+    max_tokens: int | None,
+) -> str:
+    fields: dict[str, Any] = {
+        "query": query,
+        "queries": list(queries) if queries is not None else None,
+        "engines": list(engines) if engines is not None else None,
+        "lang": lang,
+        "region": region,
+        "extract_mode": extract_mode,
+        "max_sources": max_sources,
+        "max_fetches": max_fetches,
+        "max_tokens": max_tokens,
+    }
+    return json.dumps({key: value for key, value in fields.items() if value is not None})
